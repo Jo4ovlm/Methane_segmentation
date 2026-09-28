@@ -6,7 +6,9 @@ from tqdm import tqdm
 from kornia.morphology import erosion, dilation
 import os
 
-from Utils.DataLoader import carregar_dataframe_starcop, STARCOPDataset, DataNormalizer
+from Utils.DataLoader import STARCOPBufferDataset
+
+#from Utils.DataLoader import carregar_dataframe_starcop, STARCOPDataset, DataNormalizer
 
 def binary_opening(x: torch.Tensor, kernel: torch.Tensor) -> torch.Tensor:
     eroded = torch.clamp(erosion(x.float(), kernel), 0, 1) > 0
@@ -25,79 +27,173 @@ def calcular_f1_score(previsao_logits, gabarito, threshold=0.0):
     intersecao = (previsao_limpa * gabarito).sum(dim=(2, 3))
     soma_areas = previsao_limpa.sum(dim=(2, 3)) + gabarito.sum(dim=(2, 3))
     f1 = (2 * intersecao + 1e-6) / (soma_areas + 1e-6)
-    return f1.mean().item()
-
-def treinar_modelo(modelo_escolhido,nome_modelo_salvar, produtos_entrada):
+    
+    return f1.sum().item(), f1.numel()
+def treinar_modelo(modelo_escolhido, nome_modelo_salvar, starting_point, produtos_entrada):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"\n--- Iniciando Treinamento: {nome_modelo_salvar} ---")
-    print(f"Bandas utilizadas: {produtos_entrada}\n")
 
-
-    CAMINHO_CSV = "Datasets/STARCOP_train/train.csv"
-    DIRETORIO_DADOS = "Datasets/STARCOP_train"
-    PRODUTO_SAIDA = ["labelbinary"]
-
-    print(f"Dataset: {DIRETORIO_DADOS}\n")
+    DIRETORIO_CACHE = "Datasets/STARCOP_cache_128"
+    dataset_treino = STARCOPBufferDataset(DIRETORIO_CACHE, buffer_size=1024)
     
-    df_train = carregar_dataframe_starcop(CAMINHO_CSV, DIRETORIO_DADOS)
-    dataset_treino = STARCOPDataset(df_train, produtos_entrada, PRODUTO_SAIDA, weight_loss="weight_mag1c")
-    dataloader = DataLoader(dataset_treino, batch_size=4, shuffle=True)
-    normalizador = DataNormalizer(produtos_entrada).to(device)
+    dataloader = DataLoader(
+        dataset_treino, 
+        batch_size=256,   # Recortes de 128x128 são leves, a GPU aguenta batches maiores
+        shuffle=False,   # OBRIGATÓRIO SER FALSE COM ITERABLEDATASET
+        num_workers=0, 
+        pin_memory=True
+    )
 
     modelo = modelo_escolhido(in_channels=len(produtos_entrada), out_channels=1).to(device)
-
-    caminho_salvamento = f"Modelos_treinados/{nome_modelo_salvar}.pth"
     
-    # Garante que a pasta 'Modelos_treinados' exista, se não, ele a cria para evitar erro no salvamento
+    caminho_salvamento = f"Modelos_treinados/{nome_modelo_salvar}.pth"
     os.makedirs("Modelos_treinados", exist_ok=True)
     
     if os.path.exists(caminho_salvamento):
-        print(f"Encontrado modelo treinado com o mesmo nome: '{caminho_salvamento}'")
-        print("Carregando pesos para retomar o treinamento de onde paro\n")
-        print("Caso queira iniciar um treinamento do zero, exclua o modelo em 'Modelos_treinados' ou passe outro nome como parametro\n")
+        print("Carregando pesos...")
         modelo.load_state_dict(torch.load(caminho_salvamento, map_location=device, weights_only=True))
     
     optimizer = optim.Adam(modelo.parameters(), lr=1e-4)
     criterion = nn.BCEWithLogitsLoss(reduction='none')
+    
+    scaler = torch.amp.GradScaler('cuda') 
 
     epocas = 200
     paciencia_maxima = 10 
-    melhor_f1 = 0.0
+    melhor_f1 = starting_point
     paciencia_atual = 0
 
     for epoca in range(epocas):
         modelo.train()
-        f1_acumulado = 0.0
+        loss_acumulada = 0.0
         
-        loop = tqdm(dataloader, desc=f"Época {epoca+1}/{epocas}")
-        for batch in loop:
-            inputs = normalizador(batch["input"].to(device))
-            targets = batch["output"].to(device)
-            pesos_loss = batch["weight_loss"].to(device)
+        loop_treino = tqdm(dataloader, desc=f"Época {epoca+1}/{epocas} [Treino]")
+        for batch in loop_treino:
+            inputs = batch["input"].to(device, non_blocking=True)
+            targets = batch["output"].to(device, non_blocking=True)
+            pesos_loss = batch["weight_loss"].to(device, non_blocking=True)
 
-            optimizer.zero_grad()
-            previsoes = modelo(inputs)
+            optimizer.zero_grad(set_to_none=True)
 
-            loss = (criterion(previsoes, targets) * pesos_loss).mean()
-            loss.backward()
-            optimizer.step()
+            with torch.amp.autocast('cuda'):
+                previsoes = modelo(inputs)
+                loss = (criterion(previsoes, targets) * pesos_loss).mean()
 
-            f1_atual = calcular_f1_score(previsoes, targets)
-            f1_acumulado += f1_atual
-            loop.set_postfix(Loss=f"{loss.item():.4f}", F1=f"{f1_atual:.3f}")
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
 
-        media_f1 = f1_acumulado / len(dataloader)
+            loss_acumulada += loss.item()
+            loop_treino.set_postfix(Loss=f"{loss.item():.4f}")
+
+        media_loss = loss_acumulada / len(dataloader)
+        
+        modelo.eval()
+        f1_total = 0.0
+        num_amostras = 0
+        lotes_avaliacao = 100 
+        
+        with torch.no_grad():
+            loop_val = tqdm(dataloader, total=lotes_avaliacao, desc=f"Época {epoca+1}/{epocas} [Validação]")
+            for i, batch in enumerate(loop_val):
+                if i >= lotes_avaliacao:
+                    break
+                    
+                inputs = batch["input"].to(device, non_blocking=True)
+                targets = batch["output"].to(device, non_blocking=True)
+                
+                with torch.amp.autocast('cuda'):
+                    previsoes = modelo(inputs)
+                    
+                soma_f1_batch, qtd_amostras = calcular_f1_score(previsoes, targets)
+                f1_total += soma_f1_batch
+                num_amostras += qtd_amostras
+                
+        media_f1 = f1_total / num_amostras
+        print(f"Resumo da Época {epoca+1} -> Loss Média: {media_loss:.4f} | F1-Score (Amostra): {media_f1:.4f}")
         
         if media_f1 > melhor_f1:
             melhor_f1 = media_f1
             paciencia_atual = 0
-            torch.save(modelo.state_dict(), f"Modelos_treinados/{nome_modelo_salvar}.pth")
+            torch.save(modelo.state_dict(), caminho_salvamento)
             print(f" -> Novo recorde F1: {melhor_f1:.4f}. Modelo salvo!")
         else:
             paciencia_atual += 1
             if paciencia_atual >= paciencia_maxima:
                 print(f"=== Early Stopping! Melhor F1-Score: {melhor_f1:.4f} ===")
                 break
+
+# def treinar_modelo(modelo_escolhido,nome_modelo_salvar, starting_point,produtos_entrada):
+#     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+#     print(f"\n--- Iniciando Treinamento: {nome_modelo_salvar} ---")
+#     print(f"Bandas utilizadas: {produtos_entrada}\n")
+
+
+#     CAMINHO_CSV = "Datasets/STARCOP_train/train.csv"
+#     DIRETORIO_DADOS = "Datasets/STARCOP_train"
+#     PRODUTO_SAIDA = ["labelbinary"]
+
+#     print(f"Dataset: {DIRETORIO_DADOS}\n")
+    
+#     df_train = carregar_dataframe_starcop(CAMINHO_CSV, DIRETORIO_DADOS)
+#     dataset_treino = STARCOPDataset(df_train, produtos_entrada, PRODUTO_SAIDA, weight_loss="weight_mag1c")
+#     dataloader = DataLoader(dataset_treino, batch_size=4, shuffle=True)
+#     normalizador = DataNormalizer(produtos_entrada).to(device)
+
+#     modelo = modelo_escolhido(in_channels=len(produtos_entrada), out_channels=1).to(device)
+
+#     caminho_salvamento = f"Modelos_treinados/{nome_modelo_salvar}.pth"
+    
+#     # Garante que a pasta 'Modelos_treinados' exista, se não, ele a cria para evitar erro no salvamento
+#     os.makedirs("Modelos_treinados", exist_ok=True)
+    
+#     if os.path.exists(caminho_salvamento):
+#         print(f"Encontrado modelo treinado com o mesmo nome: '{caminho_salvamento}'")
+#         print("Carregando pesos para retomar o treinamento de onde paro\n")
+#         print("Caso queira iniciar um treinamento do zero, exclua o modelo em 'Modelos_treinados' ou passe outro nome como parametro\n")
+#         modelo.load_state_dict(torch.load(caminho_salvamento, map_location=device, weights_only=True))
+    
+#     optimizer = optim.Adam(modelo.parameters(), lr=1e-4)
+#     criterion = nn.BCEWithLogitsLoss(reduction='none')
+
+#     epocas = 200
+#     paciencia_maxima = 10 
+#     melhor_f1 = starting_point
+#     paciencia_atual = 0
+
+#     for epoca in range(epocas):
+#         modelo.train()
+#         f1_acumulado = 0.0
+        
+#         loop = tqdm(dataloader, desc=f"Época {epoca+1}/{epocas}")
+#         for batch in loop:
+#             inputs = normalizador(batch["input"].to(device))
+#             targets = batch["output"].to(device)
+#             pesos_loss = batch["weight_loss"].to(device)
+
+#             optimizer.zero_grad()
+#             previsoes = modelo(inputs)
+
+#             loss = (criterion(previsoes, targets) * pesos_loss).mean()
+#             loss.backward()
+#             optimizer.step()
+
+#             f1_atual = calcular_f1_score(previsoes, targets)
+#             f1_acumulado += f1_atual
+#             loop.set_postfix(Loss=f"{loss.item():.4f}", F1=f"{f1_atual:.3f}")
+
+#         media_f1 = f1_acumulado / len(dataloader)
+        
+#         if media_f1 > melhor_f1:
+#             melhor_f1 = media_f1
+#             paciencia_atual = 0
+#             torch.save(modelo.state_dict(), f"Modelos_treinados/{nome_modelo_salvar}.pth")
+#             print(f" -> Novo recorde F1: {melhor_f1:.4f}. Modelo salvo!")
+#         else:
+#             paciencia_atual += 1
+#             if paciencia_atual >= paciencia_maxima:
+#                 print(f"=== Early Stopping! Melhor F1-Score: {melhor_f1:.4f} ===")
+#                 break
 
 if __name__ == "__main__":
 

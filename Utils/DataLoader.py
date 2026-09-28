@@ -6,6 +6,9 @@ import rasterio
 import rasterio.windows
 from torch.utils.data import Dataset, DataLoader
 import warnings
+import glob
+import random
+from torch.utils.data import IterableDataset
 
 def carregar_dataframe_starcop(caminho_csv, diretorio_imagens):
     
@@ -230,3 +233,44 @@ if __name__ == "__main__":
     except Exception as e:
         print("\nerro ao ler os arquivos. Verifique se os caminhos dos .tif e o CSV estão corretos.")
         print(f"Erro: {e}")
+
+class STARCOPCachedDataset(Dataset):
+    def __init__(self, diretorio_cache):
+        # Mapeia todos os arquivos .pt na pasta de cache
+        self.patch_files = glob.glob(os.path.join(diretorio_cache, "*.pt"))
+
+    def __len__(self):
+        return len(self.patch_files)
+
+    def __getitem__(self, idx):
+        # Lê direto do disco para a memória. Muito mais rápido que o rasterio!
+        return torch.load(self.patch_files[idx], weights_only=True)
+
+class STARCOPBufferDataset(IterableDataset):
+    def __init__(self, diretorio_cache, buffer_size=8192):
+        self.patch_files = sorted(glob.glob(os.path.join(diretorio_cache, "*.pt")))
+        self.buffer_size = buffer_size
+
+    def __len__(self):
+        return len(self.patch_files)
+
+    def __iter__(self):
+        buffer = []
+        chunk_size = self.buffer_size
+        chunks = [self.patch_files[i:i + chunk_size] for i in range(0, len(self.patch_files), chunk_size)]
+        random.shuffle(chunks)
+        
+        for chunk in chunks:
+            for path in chunk:
+                buffer.append(torch.load(path, weights_only=True))
+                
+            if len(buffer) >= self.buffer_size:
+                random.shuffle(buffer)
+                for item in buffer:
+                    yield item
+                buffer = []
+        
+        if buffer:
+            random.shuffle(buffer)
+            for item in buffer:
+                yield item
