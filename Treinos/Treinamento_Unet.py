@@ -94,7 +94,6 @@ def treinar_modelo(modelo_escolhido, nome_modelo_salvar, starting_point, produto
         
         loop_treino = tqdm(dataloader_treino, desc=f"Época {epoca+1}/{epocas} [Treino]")
         for batch in loop_treino:
-            # 1. Achata as 49 imagens de cada batch (ex: 4 * 49 = 196)
             b, p, c, h_dim, w_dim = batch["input"].shape
             
             inputs = batch["input"].view(b * p, c, h_dim, w_dim).to(device, non_blocking=True)
@@ -114,7 +113,7 @@ def treinar_modelo(modelo_escolhido, nome_modelo_salvar, starting_point, produto
             with torch.amp.autocast('cuda'):
                 previsoes = modelo(inputs)
                 loss = criterion(previsoes, targets, weight_map=pesos_loss)
-                #loss = (criterion(previsoes, targets) * pesos_loss).mean()
+                #loss = (criterion(previsoes, targets) * pesos_loss).mean() #LOSS DO BCE 
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
