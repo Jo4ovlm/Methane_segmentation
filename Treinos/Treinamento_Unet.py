@@ -6,6 +6,8 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from kornia.morphology import erosion, dilation
 import kornia.augmentation as K
+from Utils.FocalDiceLoss import FocalDiceLoss
+from sklearn.model_selection import GroupShuffleSplit
 
 from Utils.DataLoader import carregar_dataframe_starcop, STARCOPDataset, DataNormalizer
 
@@ -27,7 +29,6 @@ def calcular_f1_score(previsao_logits, gabarito, threshold=0.0):
     soma_areas = previsao_limpa.sum(dim=(2, 3)) + gabarito.sum(dim=(2, 3))
     f1 = (2 * intersecao + 1e-6) / (soma_areas + 1e-6)
     
-    # Retorna soma absoluta e contagem para cálculo fora do loop de validação
     return f1.sum().item(), f1.numel() 
 
 def treinar_modelo(modelo_escolhido, nome_modelo_salvar, starting_point, produtos_entrada):
@@ -39,16 +40,25 @@ def treinar_modelo(modelo_escolhido, nome_modelo_salvar, starting_point, produto
     
     df_train = carregar_dataframe_starcop(CAMINHO_CSV, DIRETORIO_DADOS)
     
-    # Dataset lendo GeoTIFFs grandes e cortando na RAM
-    dataset_treino = STARCOPDataset(df_train, produtos_entrada, ["labelbinary"], weight_loss="weight_mag1c")
+    gss = GroupShuffleSplit(n_splits=1, test_size=0.15, random_state=42)
+    train_idx, val_idx = next(gss.split(df_train, groups=df_train['folder']))
+    
+    df_treino_split = df_train.iloc[train_idx].reset_index(drop=True)
+    df_val_split = df_train.iloc[val_idx].reset_index(drop=True)
+    
+    print(f"Amostras Treino: {len(df_treino_split)} | Amostras Validação: {len(df_val_split)}")
+
+    dataset_treino = STARCOPDataset(df_treino_split, produtos_entrada, ["labelbinary"], weight_loss="weight_mag1c")
+    dataset_val = STARCOPDataset(df_val_split, produtos_entrada, ["labelbinary"], weight_loss="weight_mag1c")
+    
     normalizador = DataNormalizer(produtos_entrada).to(device)
     
-    dataloader = DataLoader(
-        dataset_treino, 
-        batch_size=4,   
-        shuffle=True,   
-        num_workers=4,  
-        pin_memory=True
+    dataloader_treino = DataLoader(
+        dataset_treino, batch_size=4, shuffle=True, num_workers=4, pin_memory=True
+    )
+    
+    dataloader_val = DataLoader(
+        dataset_val, batch_size=4, shuffle=False, num_workers=4, pin_memory=True
     )
 
     modelo = modelo_escolhido(in_channels=len(produtos_entrada), out_channels=1).to(device)
@@ -61,11 +71,10 @@ def treinar_modelo(modelo_escolhido, nome_modelo_salvar, starting_point, produto
         modelo.load_state_dict(torch.load(caminho_salvamento, map_location=device, weights_only=True))
     
     optimizer = optim.Adam(modelo.parameters(), lr=1e-4)
-    criterion = nn.BCEWithLogitsLoss(reduction='none')
+    #criterion = nn.BCEWithLogitsLoss(reduction='none')
+    criterion = FocalDiceLoss(alpha=0.25, gamma=2.0, weight_focal=1.0, weight_dice=1.0)
     scaler = torch.amp.GradScaler('cuda') 
 
-    # --- PIPELINE DE DATA AUGMENTATION (GPU) ---
-    # Aplica a mesma transformação na imagem, na máscara e nos pesos
     augmentacoes = K.AugmentationSequential(
         K.RandomHorizontalFlip(p=0.5),
         K.RandomVerticalFlip(p=0.5),
@@ -83,7 +92,7 @@ def treinar_modelo(modelo_escolhido, nome_modelo_salvar, starting_point, produto
         modelo.train()
         loss_acumulada = 0.0
         
-        loop_treino = tqdm(dataloader, desc=f"Época {epoca+1}/{epocas} [Treino]")
+        loop_treino = tqdm(dataloader_treino, desc=f"Época {epoca+1}/{epocas} [Treino]")
         for batch in loop_treino:
             # 1. Achata as 49 imagens de cada batch (ex: 4 * 49 = 196)
             b, p, c, h_dim, w_dim = batch["input"].shape
@@ -92,22 +101,20 @@ def treinar_modelo(modelo_escolhido, nome_modelo_salvar, starting_point, produto
             targets = batch["output"].view(b * p, 1, h_dim, w_dim).to(device, non_blocking=True)
             pesos_loss = batch["weight_loss"].view(b * p, 1, h_dim, w_dim).to(device, non_blocking=True)
 
-            # 2. Embaralha os recortes diretamente na GPU (quebra a sequência de pixels adjacentes)
             indices_shuffled = torch.randperm(b * p, device=device)
             inputs = inputs[indices_shuffled]
             targets = targets[indices_shuffled]
             pesos_loss = pesos_loss[indices_shuffled]
 
-            # 3. Data Augmentation
             inputs, targets, pesos_loss = augmentacoes(inputs, targets, pesos_loss)
 
-            # 4. Normalização e Forward/Backward Pass (AMP)
             inputs = normalizador(inputs)
             optimizer.zero_grad(set_to_none=True)
 
             with torch.amp.autocast('cuda'):
                 previsoes = modelo(inputs)
-                loss = (criterion(previsoes, targets) * pesos_loss).mean()
+                loss = criterion(previsoes, targets, weight_map=pesos_loss)
+                #loss = (criterion(previsoes, targets) * pesos_loss).mean()
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -116,20 +123,15 @@ def treinar_modelo(modelo_escolhido, nome_modelo_salvar, starting_point, produto
             loss_acumulada += loss.item()
             loop_treino.set_postfix(Loss=f"{loss.item():.4f}")
 
-        media_loss = loss_acumulada / len(dataloader)
+        media_loss = loss_acumulada / len(dataloader_treino)
         
-        # --- VALIDAÇÃO (Sem Augmentation e com F1-Score) ---
         modelo.eval()
         f1_total = 0.0
         num_amostras = 0
-        lotes_avaliacao = 100 # Avalia em uma amostra de lotes para não onerar o tempo total
         
         with torch.no_grad():
-            loop_val = tqdm(dataloader, total=lotes_avaliacao, desc=f"Época {epoca+1}/{epocas} [Validação]")
-            for i, batch in enumerate(loop_val):
-                if i >= lotes_avaliacao:
-                    break
-                    
+            loop_val = tqdm(dataloader_val, desc=f"Época {epoca+1}/{epocas} [Validação]")
+            for batch in loop_val:
                 b, p, c, h_dim, w_dim = batch["input"].shape
                 inputs = batch["input"].view(b * p, c, h_dim, w_dim).to(device, non_blocking=True)
                 targets = batch["output"].view(b * p, 1, h_dim, w_dim).to(device, non_blocking=True)

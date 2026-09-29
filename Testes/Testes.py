@@ -130,15 +130,13 @@ def avaliar_e_visualizar(modelo_escolhido, nome_modelo_salvo, produtos_entrada):
             fn = ((1 - p_flat) * g_flat).sum().item()
             tn = ((1 - p_flat) * (1 - g_flat)).sum().item()
 
-            # Acumula totais gerais
             TP_tot += tp; FP_tot += fp; FN_tot += fn; TN_tot += tn
             
-            # Estratificação por Dificuldade (Forte vs Fraca vs No-Plume)
             g_sum = g_flat.sum().item()
             if g_sum > 0:
-                # É uma imagem com pluma. Verifica se é Forte ou Fraca
-                qplume = df_test.iloc[i].get('qplume', 0)
-                is_strong = (qplume >= 1000) or (g_sum > 1000)
+                dificuldade = df_test.iloc[i].get('difficulty', '')
+                
+                is_strong = (dificuldade == 'easy')
                 
                 if is_strong:
                     TP_str += tp; FP_str += fp; FN_str += fn
