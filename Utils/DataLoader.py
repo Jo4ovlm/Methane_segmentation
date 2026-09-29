@@ -11,10 +11,7 @@ import random
 from torch.utils.data import IterableDataset
 
 def carregar_dataframe_starcop(caminho_csv, diretorio_imagens):
-    
     df = pd.read_csv(caminho_csv)
-    
-    # Cria a coluna window baseada nos metadados do CSV
     df["window"] = df.apply(
         lambda row: rasterio.windows.Window(
             col_off=row.window_col_off, 
@@ -23,10 +20,7 @@ def carregar_dataframe_starcop(caminho_csv, diretorio_imagens):
             height=row.window_height
         ), axis=1
     )
-
-    
     if "folder" in df.columns:
-        
         df["folder"] = df["folder"].apply(
             lambda x: os.path.join(diretorio_imagens, os.path.basename(os.path.normpath(x)))
         )
@@ -34,22 +28,11 @@ def carregar_dataframe_starcop(caminho_csv, diretorio_imagens):
         df["folder"] = df["id"].apply(lambda x: os.path.join(diretorio_imagens, str(x)))
 
     linhas_validas = []
-    
     for idx, row in df.iterrows():
-        # Verifica se o arquivo base (mag1c.tif) dessa pasta realmente existe
         caminho_teste = os.path.join(row['folder'], "mag1c.tif")
-        if os.path.exists(caminho_teste):
-            linhas_validas.append(True)
-        else:
-            linhas_validas.append(False)
+        linhas_validas.append(os.path.exists(caminho_teste))
             
-    # Mantém apenas as linhas cujas pastas existem fisicamente
     df = df[linhas_validas].reset_index(drop=True)
-    total_original = len(linhas_validas)
-    total_valido = len(df)
-
-    print(f"Verificação concluída! {total_valido} de {total_original} imagens estão prontas para uso.")
-
     return df
 
 class STARCOPDataset(Dataset):
@@ -71,7 +54,6 @@ class STARCOPDataset(Dataset):
         names_outputs = ["input", "output"]
         output_products = [self.input_products, self.output_products]
         
-        # Se formos usar o mag1c como mapa de pesos para a Loss
         if self.weight_loss is not None:
             names_outputs.append("weight_loss")
             output_products.append([self.weight_loss])
@@ -79,18 +61,23 @@ class STARCOPDataset(Dataset):
         for io_name, products in zip(names_outputs, output_products):
             tensors = []
             for key_name in products:
-                # Monta o caminho exato do arquivo .tif (ex: TOA_AVIRIS_460nm.tif)
                 path = os.path.join(product_folder, f"{key_name}.tif")
-                
                 with rasterio.open(path) as src:
-                    # Lê o recorte específico usando a window
                     tensors.append(torch.from_numpy(src.read(window=window)))
             
-            # Concatena todas as bandas num único tensor (C, H, W)
             if len(tensors) > 1:
-                out_dict[io_name] = torch.cat(tensors, dim=0).float()
+                tensor_concat = torch.cat(tensors, dim=0).float()
             elif len(tensors) == 1:
-                out_dict[io_name] = tensors[0].float()
+                tensor_concat = tensors[0].float()
+
+            # Lógica On-The-Fly: Fatiamento de 512x512 para 128x128
+            _, h, w = tensor_concat.shape
+            patches = []
+            for y in range(0, h - 128 + 1, 64):
+                for x in range(0, w - 128 + 1, 64):
+                    patches.append(tensor_concat[:, y:y+128, x:x+128])
+            
+            out_dict[io_name] = torch.stack(patches)
 
         return out_dict
 
@@ -189,88 +176,3 @@ class DataNormalizer(torch.nn.Module):
         # Fórmula: clipe((x - offset) / fator, min, max)
         return torch.clamp((x - self.offsets) / self.factors, self.clip_min, self.clip_max)
 
-
-# ==========================================
-# BLOCO DE TESTE
-# ==========================================
-if __name__ == "__main__":
-    CAMINHO_CSV_TREINO = "Datasets/STARCOP_train_easy/train_easy.csv" # Mude para o caminho real
-    DIRETORIO_DADOS = "Datasets/STARCOP_train_easy"             # Pasta onde estão os arquivos .tif
-    
-    # 1. Definindo o que entra (input) e o que a UNet deve prever (output)
-    # Por exemplo, usaremos 3 bandas hiperespectrais como entrada e a máscara binária como saída
-    PRODUTOS_ENTRADA = ["TOA_AVIRIS_460nm", "TOA_AVIRIS_550nm", "TOA_AVIRIS_640nm"]
-    PRODUTO_SAIDA = ["labelbinary"] # Máscara de segmentação
-    
-    print("Carregando CSV...")
-    df_train = carregar_dataframe_starcop(CAMINHO_CSV_TREINO, DIRETORIO_DADOS)
-    
-    print("Instanciando Dataset...")
-    dataset_treino = STARCOPDataset(
-        dataframe=df_train,
-        input_products=PRODUTOS_ENTRADA,
-        output_products=PRODUTO_SAIDA,
-        weight_loss="weight_mag1c" # Opcional: usaremos para treinar depois
-    )
-    
-    dataloader_treino = DataLoader(dataset_treino, batch_size=4, shuffle=True)
-    normalizador = DataNormalizer(PRODUTOS_ENTRADA)
-
-    # Pegando 1 batch para testar
-    print("Buscando um batch de imagens (isso testa se a leitura com rasterio funcionou)...")
-    try:
-        batch = next(iter(dataloader_treino))
-        inputs_brutos = batch["input"]
-        outputs = batch["output"]
-        
-        # Passando os dados pelo normalizador
-        inputs_normalizados = normalizador(inputs_brutos)
-        
-        print("\nSUCESSO!")
-        print(f"Shape do Input Normalizado: {inputs_normalizados.shape} (Batch, Canais, Altura, Largura)")
-        print(f"Shape da Máscara (Output): {outputs.shape}")
-        
-    except Exception as e:
-        print("\nerro ao ler os arquivos. Verifique se os caminhos dos .tif e o CSV estão corretos.")
-        print(f"Erro: {e}")
-
-class STARCOPCachedDataset(Dataset):
-    def __init__(self, diretorio_cache):
-        # Mapeia todos os arquivos .pt na pasta de cache
-        self.patch_files = glob.glob(os.path.join(diretorio_cache, "*.pt"))
-
-    def __len__(self):
-        return len(self.patch_files)
-
-    def __getitem__(self, idx):
-        # Lê direto do disco para a memória. Muito mais rápido que o rasterio!
-        return torch.load(self.patch_files[idx], weights_only=True)
-
-class STARCOPBufferDataset(IterableDataset):
-    def __init__(self, diretorio_cache, buffer_size=8192):
-        self.patch_files = sorted(glob.glob(os.path.join(diretorio_cache, "*.pt")))
-        self.buffer_size = buffer_size
-
-    def __len__(self):
-        return len(self.patch_files)
-
-    def __iter__(self):
-        buffer = []
-        chunk_size = self.buffer_size
-        chunks = [self.patch_files[i:i + chunk_size] for i in range(0, len(self.patch_files), chunk_size)]
-        random.shuffle(chunks)
-        
-        for chunk in chunks:
-            for path in chunk:
-                buffer.append(torch.load(path, weights_only=True))
-                
-            if len(buffer) >= self.buffer_size:
-                random.shuffle(buffer)
-                for item in buffer:
-                    yield item
-                buffer = []
-        
-        if buffer:
-            random.shuffle(buffer)
-            for item in buffer:
-                yield item
