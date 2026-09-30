@@ -61,7 +61,7 @@ def salvar_log_csv(nome_modelo, f1_global, f1_strong, f1_weak, iou, auprc, fpr_n
     print(f"Log do teste salvo em: '{nome_arquivo}'")
 
 def avaliar_e_visualizar(modelo_escolhido, nome_modelo_salvo, produtos_entrada):
-    device_obj = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device_obj = torch.device("cpu")#torch.device("cuda" if torch.cuda.is_available() else "cpu")
     device_name = device_obj.type.upper()
     print(f"\nIniciando Avaliação do modelo: {nome_modelo_salvo} ({device_name})")
 
@@ -83,8 +83,7 @@ def avaliar_e_visualizar(modelo_escolhido, nome_modelo_salvo, produtos_entrada):
 
     kernel_cruz = torch.tensor([[0, 1, 0], [1, 1, 1], [0, 1, 0]]).float().to(device_obj)
 
-    todas_probabilidades = []
-    todos_gabaritos = []
+    auprc_por_imagem = []
     
     # Acumuladores Globais
     TP_tot = FP_tot = FN_tot = TN_tot = 0
@@ -105,8 +104,12 @@ def avaliar_e_visualizar(modelo_escolhido, nome_modelo_salvo, produtos_entrada):
 
     with torch.no_grad():
         for i, batch in enumerate(tqdm(dataloader, desc="Calculando Métricas e Latência")):
-            inputs = normalizador(batch["input"].to(device_obj))
-            targets = batch["output"].to(device_obj)
+            b, p, c, h_dim, w_dim = batch["input"].shape
+            
+            inputs = batch["input"].view(b * p, c, h_dim, w_dim).to(device_obj)
+            targets = batch["output"].view(b * p, 1, h_dim, w_dim).to(device_obj)
+            
+            inputs = normalizador(inputs)
 
             if device_name == "CUDA": 
                 torch.cuda.synchronize()
@@ -147,8 +150,12 @@ def avaliar_e_visualizar(modelo_escolhido, nome_modelo_salvo, produtos_entrada):
                 FP_no_plume += fp
                 TN_no_plume += tn
 
-            todas_probabilidades.extend(probs.view(-1).cpu().numpy())
-            todos_gabaritos.extend(g_flat.cpu().numpy())
+            probs_np = probs.view(-1).cpu().numpy()
+            g_flat_np = g_flat.cpu().numpy()
+            
+            if g_sum > 0: 
+                auprc_img = average_precision_score(g_flat_np, probs_np)
+                auprc_por_imagem.append(auprc_img)
 
             if g_sum > 0 and i == 0: 
                 pasta = df_test.iloc[i]['folder']
@@ -188,7 +195,7 @@ def avaliar_e_visualizar(modelo_escolhido, nome_modelo_salvo, produtos_entrada):
     # FPR restrito aos tiles sem pluma
     fpr_no_plume = FP_no_plume / (FP_no_plume + TN_no_plume + 1e-6)
     
-    auprc = average_precision_score(todos_gabaritos, todas_probabilidades)
+    auprc = np.mean(auprc_por_imagem) if len(auprc_por_imagem) > 0 else 0.0
     
     latencia_media_ms = (tempo_total_inferencia / len(dataloader)) * 1000
 
