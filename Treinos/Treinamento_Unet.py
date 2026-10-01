@@ -71,8 +71,11 @@ def treinar_modelo(modelo_escolhido, nome_modelo_salvar, starting_point, produto
         modelo.load_state_dict(torch.load(caminho_salvamento, map_location=device, weights_only=True))
     
     optimizer = optim.Adam(modelo.parameters(), lr=1e-4)
-    #criterion = nn.BCEWithLogitsLoss(reduction='none')
-    criterion = FocalDiceLoss(alpha=0.25, gamma=2.0, weight_focal=1.0, weight_dice=1.0)
+        
+    peso_pluma = torch.tensor([20.0]).to(device)
+    criterion = nn.BCEWithLogitsLoss(reduction='none', pos_weight=peso_pluma)
+
+    #criterion = FocalDiceLoss(alpha=0.25, gamma=2.0, weight_focal=1.0, weight_dice=1.0)
     scaler = torch.amp.GradScaler('cuda') 
 
     augmentacoes = K.AugmentationSequential(
@@ -112,8 +115,8 @@ def treinar_modelo(modelo_escolhido, nome_modelo_salvar, starting_point, produto
 
             with torch.amp.autocast('cuda'):
                 previsoes = modelo(inputs)
-                loss = criterion(previsoes, targets, weight_map=pesos_loss)
-                #loss = (criterion(previsoes, targets) * pesos_loss).mean() #LOSS DO BCE 
+                #loss = criterion(previsoes, targets, weight_map=pesos_loss)
+                loss = (criterion(previsoes, targets) * pesos_loss).mean() #LOSS DO BCE 
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)

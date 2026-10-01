@@ -61,7 +61,7 @@ def salvar_log_csv(nome_modelo, f1_global, f1_strong, f1_weak, iou, auprc, fpr_n
     print(f"Log do teste salvo em: '{nome_arquivo}'")
 
 def avaliar_e_visualizar(modelo_escolhido, nome_modelo_salvo, produtos_entrada):
-    device_obj = torch.device("cpu")#torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device_obj = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     device_name = device_obj.type.upper()
     print(f"\nIniciando Avaliação do modelo: {nome_modelo_salvo} ({device_name})")
 
