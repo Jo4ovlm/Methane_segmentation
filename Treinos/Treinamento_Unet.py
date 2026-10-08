@@ -48,8 +48,8 @@ def treinar_modelo(modelo_escolhido, nome_modelo_salvar, starting_point, produto
     
     print(f"Amostras Treino: {len(df_treino_split)} | Amostras Validação: {len(df_val_split)}")
 
-    dataset_treino = STARCOPDataset(df_treino_split, produtos_entrada, ["labelbinary"], weight_loss="weight_mag1c")
-    dataset_val = STARCOPDataset(df_val_split, produtos_entrada, ["labelbinary"], weight_loss="weight_mag1c")
+    dataset_treino = STARCOPDataset(df_treino_split, produtos_entrada, ["labelbinary"], weight_loss="weight_mag1c", modo_treino=True)
+    dataset_val = STARCOPDataset(df_val_split, produtos_entrada, ["labelbinary"], weight_loss="weight_mag1c", modo_treino=False)
     
     normalizador = DataNormalizer(produtos_entrada).to(device)
     
@@ -72,8 +72,7 @@ def treinar_modelo(modelo_escolhido, nome_modelo_salvar, starting_point, produto
     
     optimizer = optim.Adam(modelo.parameters(), lr=1e-4)
         
-    peso_pluma = torch.tensor([20.0]).to(device)
-    criterion = nn.BCEWithLogitsLoss(reduction='none', pos_weight=peso_pluma)
+    criterion = nn.BCEWithLogitsLoss(reduction='none')
 
     #criterion = FocalDiceLoss(alpha=0.25, gamma=2.0, weight_focal=1.0, weight_dice=1.0)
     scaler = torch.amp.GradScaler('cuda') 
@@ -134,9 +133,8 @@ def treinar_modelo(modelo_escolhido, nome_modelo_salvar, starting_point, produto
         with torch.no_grad():
             loop_val = tqdm(dataloader_val, desc=f"Época {epoca+1}/{epocas} [Validação]")
             for batch in loop_val:
-                b, p, c, h_dim, w_dim = batch["input"].shape
-                inputs = batch["input"].view(b * p, c, h_dim, w_dim).to(device, non_blocking=True)
-                targets = batch["output"].view(b * p, 1, h_dim, w_dim).to(device, non_blocking=True)
+                inputs = batch["input"].to(device, non_blocking=True)
+                targets = batch["output"].to(device, non_blocking=True)
                 
                 inputs = normalizador(inputs)
                 

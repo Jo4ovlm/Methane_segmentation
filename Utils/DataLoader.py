@@ -36,11 +36,12 @@ def carregar_dataframe_starcop(caminho_csv, diretorio_imagens):
     return df
 
 class STARCOPDataset(Dataset):
-    def __init__(self, dataframe, input_products, output_products, weight_loss=None):
+    def __init__(self, dataframe, input_products, output_products, weight_loss=None, modo_treino=True):
         self.dataframe = dataframe
         self.input_products = input_products
         self.output_products = output_products
         self.weight_loss = weight_loss
+        self.modo_treino = modo_treino
 
     def __len__(self):
         return self.dataframe.shape[0]
@@ -70,14 +71,16 @@ class STARCOPDataset(Dataset):
             elif len(tensors) == 1:
                 tensor_concat = tensors[0].float()
 
-            # Lógica On-The-Fly: Fatiamento de 512x512 para 128x128
-            _, h, w = tensor_concat.shape
-            patches = []
-            for y in range(0, h - 128 + 1, 64):
-                for x in range(0, w - 128 + 1, 64):
-                    patches.append(tensor_concat[:, y:y+128, x:x+128])
-            
-            out_dict[io_name] = torch.stack(patches)
+            if self.modo_treino:
+                _, h, w = tensor_concat.shape
+                patches = []
+                for y in range(0, h - 128 + 1, 64):
+                    for x in range(0, w - 128 + 1, 64):
+                        patches.append(tensor_concat[:, y:y+128, x:x+128])
+                
+                out_dict[io_name] = torch.stack(patches)
+            else:
+                out_dict[io_name] = tensor_concat
 
         return out_dict
 

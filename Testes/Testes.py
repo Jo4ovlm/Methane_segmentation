@@ -69,7 +69,7 @@ def avaliar_e_visualizar(modelo_escolhido, nome_modelo_salvo, produtos_entrada):
     DIRETORIO_DADOS_TESTE = "Datasets/STARCOP_test"
 
     df_test = carregar_dataframe_starcop(CAMINHO_CSV_TESTE, DIRETORIO_DADOS_TESTE)
-    dataset_teste = STARCOPDataset(df_test, produtos_entrada, ["labelbinary"])
+    dataset_teste = STARCOPDataset(df_test, produtos_entrada, ["labelbinary"], modo_treino=False)
     dataloader = DataLoader(dataset_teste, batch_size=1, shuffle=False)
     normalizador = DataNormalizer(produtos_entrada).to(device_obj)
 
@@ -104,10 +104,9 @@ def avaliar_e_visualizar(modelo_escolhido, nome_modelo_salvo, produtos_entrada):
 
     with torch.no_grad():
         for i, batch in enumerate(tqdm(dataloader, desc="Calculando Métricas e Latência")):
-            b, p, c, h_dim, w_dim = batch["input"].shape
-            
-            inputs = batch["input"].view(b * p, c, h_dim, w_dim).to(device_obj)
-            targets = batch["output"].view(b * p, 1, h_dim, w_dim).to(device_obj)
+           
+            inputs = batch["input"].to(device_obj, non_blocking=True)
+            targets = batch["output"].to(device_obj, non_blocking=True)
             
             inputs = normalizador(inputs)
 
