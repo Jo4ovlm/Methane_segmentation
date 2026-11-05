@@ -31,7 +31,7 @@ def calcular_f1_score(previsao_logits, gabarito, threshold=0.0):
     
     return f1.sum().item(), f1.numel() 
 
-def treinar_modelo(modelo_escolhido, nome_modelo_salvar, starting_point, produtos_entrada):
+def treinar_modelo(modelo_escolhido, nome_modelo_salvar, starting_point, produtos_entrada, selected_loss):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"\n--- Iniciando Treinamento: {nome_modelo_salvar} ---")
 
@@ -71,10 +71,12 @@ def treinar_modelo(modelo_escolhido, nome_modelo_salvar, starting_point, produto
         modelo.load_state_dict(torch.load(caminho_salvamento, map_location=device, weights_only=True))
     
     optimizer = optim.Adam(modelo.parameters(), lr=1e-4)
-        
-    criterion = nn.BCEWithLogitsLoss(reduction='none')
 
-    #criterion = FocalDiceLoss(alpha=0.25, gamma=2.0, weight_focal=1.0, weight_dice=1.0)
+    if selected_loss == "FD":
+        criterion = FocalDiceLoss(alpha=0.25, gamma=2.0, weight_focal=1.0, weight_dice=1.0)
+    else:
+        criterion = nn.BCEWithLogitsLoss(reduction='none')
+
     scaler = torch.amp.GradScaler('cuda') 
 
     augmentacoes = K.AugmentationSequential(
@@ -114,8 +116,10 @@ def treinar_modelo(modelo_escolhido, nome_modelo_salvar, starting_point, produto
 
             with torch.amp.autocast('cuda'):
                 previsoes = modelo(inputs)
-                #loss = criterion(previsoes, targets, weight_map=pesos_loss)
-                loss = (criterion(previsoes, targets) * pesos_loss).mean() #LOSS DO BCE 
+                if selected_loss == "FD":
+                    loss = criterion(previsoes, targets, weight_map=pesos_loss)
+                else:
+                    loss = (criterion(previsoes, targets) * pesos_loss).mean() #LOSS DO BCE 
 
             scaler.scale(loss).backward()
             scaler.step(optimizer)

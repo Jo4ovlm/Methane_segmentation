@@ -60,8 +60,10 @@ def salvar_log_csv(nome_modelo, f1_global, f1_strong, f1_weak, iou, auprc, fpr_n
     df.to_csv(nome_arquivo, index=False)
     print(f"Log do teste salvo em: '{nome_arquivo}'")
 
-def avaliar_e_visualizar(modelo_escolhido, nome_modelo_salvo, produtos_entrada):
-    device_obj = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def avaliar_e_visualizar(modelo_escolhido, nome_modelo_salvo, produtos_entrada, device):
+    if device == 'cuda':
+        device_obj = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else: device_obj = torch.device("cpu")
     device_name = device_obj.type.upper()
     print(f"\nIniciando Avaliação do modelo: {nome_modelo_salvo} ({device_name})")
 
@@ -102,6 +104,7 @@ def avaliar_e_visualizar(modelo_escolhido, nome_modelo_salvo, produtos_entrada):
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats(device_obj)
 
+
     with torch.no_grad():
         for i, batch in enumerate(tqdm(dataloader, desc="Calculando Métricas e Latência")):
            
@@ -135,7 +138,7 @@ def avaliar_e_visualizar(modelo_escolhido, nome_modelo_salvo, produtos_entrada):
             TP_tot += tp; FP_tot += fp; FN_tot += fn; TN_tot += tn
             
             g_sum = g_flat.sum().item()
-            if g_sum > 0:
+            if g_sum > 0 :
                 dificuldade = df_test.iloc[i].get('difficulty', '')
                 
                 is_strong = (dificuldade == 'easy')
@@ -156,7 +159,7 @@ def avaliar_e_visualizar(modelo_escolhido, nome_modelo_salvo, produtos_entrada):
                 auprc_img = average_precision_score(g_flat_np, probs_np)
                 auprc_por_imagem.append(auprc_img)
 
-            if g_sum > 0 and i == 0: 
+            if g_sum > 0: 
                 pasta = df_test.iloc[i]['folder']
                 window = df_test.iloc[i]['window']
                 

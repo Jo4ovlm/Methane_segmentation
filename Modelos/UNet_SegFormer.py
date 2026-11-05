@@ -110,17 +110,17 @@ class SegFormerB0(nn.Module):
 		target_size = x1.shape[2:]
 		c1 = self.linear1(x1)
 		c2 = F.interpolate(
-			self.linear2(x2), size=target_size, mode="bilinear", align_corners=False
+			self.linear2(x2), size=target_size, mode="bilinear", align_corners=True
 		)
 		c3 = F.interpolate(
-			self.linear3(x3), size=target_size, mode="bilinear", align_corners=False
+			self.linear3(x3), size=target_size, mode="bilinear", align_corners=True
 		)
 		c4 = F.interpolate(
-			self.linear4(x4), size=target_size, mode="bilinear", align_corners=False
+			self.linear4(x4), size=target_size, mode="bilinear", align_corners=True
 		)
 
 		fused = self.linear_fuse(torch.cat([c1, c2, c3, c4], dim=1))
 		logits = self.out_conv(fused)
 		return F.interpolate(
-			logits, size=(height, width), mode="bilinear", align_corners=False
+			logits, size=(height, width), mode="bilinear", align_corners=True
 		)

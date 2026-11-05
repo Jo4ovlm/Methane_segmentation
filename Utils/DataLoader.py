@@ -4,11 +4,8 @@ import pandas as pd
 import numpy as np
 import rasterio
 import rasterio.windows
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 import warnings
-import glob
-import random
-from torch.utils.data import IterableDataset
 
 def carregar_dataframe_starcop(caminho_csv, diretorio_imagens):
     df = pd.read_csv(caminho_csv)
@@ -86,72 +83,10 @@ class STARCOPDataset(Dataset):
 
 
 BAND_NORMALIZATION = {
-  'TOA_S2A_B1': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_S2A_B10': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_S2A_B11': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_S2A_B12': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_S2A_B2': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_S2A_B3': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_S2A_B4': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_S2A_B5': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_S2A_B6': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_S2A_B7': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_S2A_B8': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_S2A_B8A': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_S2A_B9': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_S2B_B1': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_S2B_B10': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_S2B_B11': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_S2B_B12': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_S2B_B2': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_S2B_B3': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_S2B_B4': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_S2B_B5': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_S2B_B6': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_S2B_B7': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_S2B_B8': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_S2B_B8A': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_S2B_B9': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_WV3_SWIR1': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_WV3_SWIR2': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_WV3_SWIR3': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_WV3_SWIR4': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_WV3_SWIR5': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_WV3_SWIR6': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_WV3_SWIR7': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_WV3_SWIR8': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
  'TOA_AVIRIS_550nm': {'offset': 0, 'factor': 60, 'clip': (0, 2)},
  'TOA_AVIRIS_640nm': {'offset': 0, 'factor': 60, 'clip': (0, 2)},
  'TOA_AVIRIS_460nm': {'offset': 0, 'factor': 60, 'clip': (0, 2)},
- 'TOA_AVIRIS_2004nm': {'offset': 0, 'factor': 1, 'clip': (0, 2)},
- 'TOA_AVIRIS_2109nm': {'offset': 0, 'factor': 5, 'clip': (0, 2)},
- 'TOA_AVIRIS_2310nm': {'offset': 0, 'factor': 4, 'clip': (0, 2)},
- 'TOA_AVIRIS_2350nm': {'offset': 0, 'factor': 3, 'clip': (0, 2)},
- 'TOA_AVIRIS_2360nm': {'offset': 0, 'factor': 3, 'clip': (0, 2)},
  'mag1c': {'offset': 0, 'factor': 1750, 'clip': (0, 2)},
-
- 'ratio_aviris_2350_2310_out':  {'offset': 0, 'factor': 0.0625, 'clip': (-2., 2.)}, # 1/16 = 0.0625
- 'ratio_aviris_2350_2360_out': {'offset': 0, 'factor': 0.0625, 'clip': (-2., 2.)},
- 'ratio_aviris_2360_2310_out':  {'offset': 0, 'factor': 0.0625, 'clip': (-2., 2.)}, # note: we are being gentle, we could do 1/18 instead?
-    
- 'ratio_wv3_B7_B5_varon21_sum_c_out': {'offset': 0, 'factor': 0.04, 'clip': (-2., 2.)}, # 1/25 = 0.04
- 'ratio_wv3_B8_B5_varon21_sum_c_out': {'offset': 0, 'factor': 0.1, 'clip': (-2., 2.)},
- 'ratio_wv3_B7_B6_varon21_sum_c_out': {'offset': 0, 'factor': 0.1, 'clip': (-2., 2.)},
-
- 'ratio_wv3_B7_B7MLR_SanchezGarcia22_sum_c_out': {'offset': 0, 'factor': 0.025, 'clip': (-2., 2.)}, # 1/40=0.025
- 'ratio_wv3_B8_B8MLR_SanchezGarcia22_sum_c_out': {'offset': 0, 'factor': 0.0769, 'clip': (-2., 2.)}, # 1/13=0.07692307692
-    
- 'ratio_wv3_B7_B7MLR_SanchezGarcia22_simplediv': {'offset': 0, 'factor': 1, 'clip': (-2., 2.)}, #
- 'ratio_wv3_B8_B8MLR_SanchezGarcia22_simplediv': {'offset': -0.5, 'factor': 1, 'clip': (-2., 2.)}, # 1/15=0.0666
-
-    
- 'ratio_lrn_bands2band8only_60ep_512_l1': {'offset': 0, 'factor': 0.5, 'clip': (-2., 2.)}, # orig has useful in cca -0.5,0.5, so *2 and then clip -2,2
-
- 'ratio_wv3_B7_B7MLR_fromS2_9bands_sum_c_out': {'offset': 0, 'factor': 1, 'clip': (-2., 2.)}, # keep
- 'ratio_wv3_B7_B7MLR_fromS2_5bands_sum_c_out': {'offset': 0, 'factor': 0.1111111, 'clip': (-2., 2.)}, # *9
- 'ratio_wv3_B8_B8MLR_fromS2_9bands_sum_c_out': {'offset': 0, 'factor': 0.125, 'clip': (-2., 2.)}, # *8
- 'ratio_wv3_B8_B8MLR_fromS2_5bands_sum_c_out': {'offset': 0, 'factor': 0.1666666, 'clip': (-2., 2.)}, # *6
-
 }
 
 class DataNormalizer(torch.nn.Module):
@@ -169,13 +104,11 @@ class DataNormalizer(torch.nn.Module):
                 offsets.append(cfg['offset']); factors.append(cfg['factor'])
                 clip_mins.append(cfg['clip'][0]); clip_maxs.append(cfg['clip'][1])
 
-        # Cria os tensores para que a normalização ocorra direto na GPU (se disponível)
         self.offsets = torch.nn.Parameter(torch.tensor(offsets).view(-1, 1, 1).float(), requires_grad=False)
         self.factors = torch.nn.Parameter(torch.tensor(factors).view(-1, 1, 1).float(), requires_grad=False)
         self.clip_min = torch.nn.Parameter(torch.tensor(clip_mins).view(-1, 1, 1).float(), requires_grad=False)
         self.clip_max = torch.nn.Parameter(torch.tensor(clip_maxs).view(-1, 1, 1).float(), requires_grad=False)
 
     def forward(self, x):
-        # Fórmula: clipe((x - offset) / fator, min, max)
         return torch.clamp((x - self.offsets) / self.factors, self.clip_min, self.clip_max)
 
