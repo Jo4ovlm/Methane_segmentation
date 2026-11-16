@@ -2,6 +2,4 @@
 !Modelos_treinados/.gitkeep
 Datasets/*
 !Datasets/.gitkeep
-Resultados_testes/*
-!Resultados_testes/.gitkeep
 **/__pycache__/

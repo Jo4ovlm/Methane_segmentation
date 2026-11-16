@@ -159,7 +159,7 @@ def avaliar_e_visualizar(modelo_escolhido, nome_modelo_salvo, produtos_entrada, 
                 auprc_img = average_precision_score(g_flat_np, probs_np)
                 auprc_por_imagem.append(auprc_img)
 
-            if g_sum > 0: 
+            if g_sum > 0 and True == False: 
                 pasta = df_test.iloc[i]['folder']
                 window = df_test.iloc[i]['window']
                 
@@ -183,7 +183,7 @@ def avaliar_e_visualizar(modelo_escolhido, nome_modelo_salvo, produtos_entrada, 
                 ax[4].set_title("Diferença")
                 for a in ax: a.axis('off')
                 fig.suptitle(f"Avaliação do Modelo: {nome_modelo_salvo}", fontsize=16)
-                plt.show()
+                #plt.show()
 
     # Cálculos das Métricas
     vram_pico_mb = ( torch.cuda.max_memory_allocated() / (1024 * 1024) if device_name == "CUDA" else 0.0 )
@@ -201,17 +201,17 @@ def avaliar_e_visualizar(modelo_escolhido, nome_modelo_salvo, produtos_entrada, 
     
     latencia_media_ms = (tempo_total_inferencia / len(dataloader)) * 1000
 
-    print(f" Modelo:           {nome_modelo_salvo}")
-    print(f" Total Parâmetros: {total_parametros:,}")
-    print(f" Tamanho Arquivo:  {tamanho_arquivo_mb:.2f} MB")
-    print(f" Latência Média:   {latencia_media_ms:.2f} ms por imagem ({device_name})")
-    print(f" Pico de VRAM:     {vram_pico_mb:.2f} MB")
-    print(f" F1-Global:        {f1_global:.4f}")
-    print(f" F1-Strong:        {f1_strong:.4f} (Emissão >= 1000 kg/h ou > 1000 px)")
-    print(f" F1-Weak:          {f1_weak:.4f} (Emissão < 1000 kg/h e <= 1000 px)")
-    print(f" IoU:              {iou_global:.4f}")
-    print(f" AUPRC:            {auprc:.4f}")
-    print(f" FPR (No-Plume):   {fpr_no_plume:.6f}")
+    #print(f" Modelo:           {nome_modelo_salvo}")
+    #print(f" Total Parâmetros: {total_parametros:,}")
+    #print(f" Tamanho Arquivo:  {tamanho_arquivo_mb:.2f} MB")
+    #print(f" Latência Média:   {latencia_media_ms:.2f} ms por imagem ({device_name})")
+    #print(f" Pico de VRAM:     {vram_pico_mb:.2f} MB")
+    #print(f" F1-Global:        {f1_global:.4f}")
+    #print(f" F1-Strong:        {f1_strong:.4f} (Emissão >= 1000 kg/h ou > 1000 px)")
+    #print(f" F1-Weak:          {f1_weak:.4f} (Emissão < 1000 kg/h e <= 1000 px)")
+    #print(f" IoU:              {iou_global:.4f}")
+    #print(f" AUPRC:            {auprc:.4f}")
+    #print(f" FPR (No-Plume):   {fpr_no_plume:.6f}")
 
     salvar_log_csv(nome_modelo_salvo, f1_global, f1_strong, f1_weak, iou_global, auprc, fpr_no_plume, device_name, total_parametros, tamanho_arquivo_mb, latencia_media_ms, vram_pico_mb)
 
